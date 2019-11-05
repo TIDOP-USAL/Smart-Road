@@ -10,7 +10,8 @@ add_definitions(${PCL_DEFINITIONS})
 
 ADD_EXECUTABLE(mms_preprocessing  mms_preprocessing.cpp)           
 target_link_libraries(mms_preprocessing ${PCL_LIBRARIES}
-                                ${Boost_LIBRARIES})
+                                ${Boost_LIBRARIES}
+                                las)
 
 
 INSTALL(TARGETS mms_preprocessing

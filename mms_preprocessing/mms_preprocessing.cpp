@@ -12,6 +12,10 @@
 #include <pcl/outofcore/outofcore.h>
 #include <pcl/outofcore/outofcore_impl.h>
 
+#include <liblas/liblas.hpp>
+#include <fstream>  // std::ifstream
+#include <iostream> // std::cout
+
 // todo: Read clouds as PCLPointCloud2 so we don't need to define PointT explicitly.
 //       This also requires our octree to take PCLPointCloud2 as an input.
 using PointT = pcl::PointXYZ;
