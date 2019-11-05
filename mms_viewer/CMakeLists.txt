@@ -1,19 +1,3 @@
-CMAKE_MINIMUM_REQUIRED(VERSION 2.8.11)
-PROJECT(QtOSG)
-
-	if(NOT MSVC)
-		SET(CMAKE_CXX_FLAGS "-std=c++11 -Wall -pedantic -Wno-long-long")
-	ENDIF()
-
-SET(CMAKE_INCLUDE_CURRENT_DIR ON)
-SET(CMAKE_AUTOMOC ON)
-
-#set the default path for built executables to the "bin" directory
-set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
-#set the default path for built libraries to the "lib" directory
-set(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
-link_directories(${CMAKE_BINARY_DIR}/lib)
-
 ######################### External Libraries ###########################
 
 IF(DEFINED ENV{QT5_DIR})
@@ -23,7 +7,7 @@ ENDIF()
 SET(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ${QT5_DIR})
 
 find_package(PCL 1.7 REQUIRED COMPONENTS 
-			io octree filters search kdtree  outofcore visualization)
+      io octree filters search kdtree  outofcore visualization)
 include_directories(${PCL_INCLUDE_DIRS})
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
@@ -31,6 +15,7 @@ add_definitions(${PCL_DEFINITIONS})
 FIND_PACKAGE(Qt5Core)
 FIND_PACKAGE(Qt5Gui)
 FIND_PACKAGE(Qt5OpenGL)
+
 FIND_PACKAGE(OpenSceneGraph REQUIRED COMPONENTS osgDB osgGA osgUtil osgViewer)
 
 include_directories(${OPENSCENEGRAPH_INCLUDE_DIRS})
@@ -44,6 +29,7 @@ SET(WITH_PICK_HANDLER         ON CACHE BOOL "Build with pick handler support")
 SET(WITH_SELECTION_PROCESSING ON CACHE BOOL "Build with selection processing support")
 
 ######################## Executables / Libraries ######################
+
 
 add_library(osg_widget  OSGWidget/OSGWidget.cpp
                         OSGWidget/PickHandler.cpp)
