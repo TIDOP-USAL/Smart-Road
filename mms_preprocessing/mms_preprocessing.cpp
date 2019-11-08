@@ -1,7 +1,6 @@
 #include <pcl/common/time.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl/PCLPointCloud2.h>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl/pcl_macros.h>
@@ -17,9 +16,10 @@
 #include <iostream> // std::cout
 #include <exception>
 
-// todo: Read clouds as PCLPointCloud2 so we don't need to define PointT explicitly.
-//       This also requires our octree to take PCLPointCloud2 as an input.
-using PointT = pcl::PointXYZ;
+#include <vector>
+
+using PointType = pcl::PointXYZ;
+using PointCloudPtr = pcl::PointCloud<PointType>::Ptr;
 
 using namespace pcl;
 using namespace pcl::outofcore;
@@ -36,9 +36,9 @@ class CloudsGrid
 private:
   pcl::PointXYZ mBBMin;
   pcl::PointXYZ mBBMax;
-  size_t mNbCols, mNbRows;
+  size_t mNbCellsX, mNbCellsY;
   float mGridSize, mBBSizeX, mBBSizeY;
-  PCLPointCloud2::Ptr* mCloudsGrid_p;
+  std::vector<PointCloudPtr>* mCloudsGrid_p;
 
 public:
 
@@ -46,19 +46,19 @@ public:
   {
     this->mBBMin = i_BBMin;
   	this->mBBMax = i_BBMax;
+    this->mGridSize = i_gridSize;
 
     this->mBBSizeX = this->mBBMax.x - this->mBBMin.x;
     this->mBBSizeY = this->mBBMax.y - this->mBBMin.y;
-    this->mNbRows = ceil((this->mbbSizeX)/i_gridSize);
-    this->mNbCols = ceil((this->mBBSizeY)/i_gridSize);
-    for (size_t col = 0; col < this->mNbCols; col++)
+    this->mNbCellsX = ceil((this->mBBSizeX)/i_gridSize);
+    this->mNbCellsY = ceil((this->mBBSizeY)/i_gridSize);
+    this->mCloudsGrid_p = new std::vector<PointCloudPtr>(this->mNbCellsX*this->mNbCellsY);
+    for (size_t i = 0; i < this->mCloudsGrid_p->size(); i++)
     {
-      for (size_t row = 0; row < this->mNbRows; row++)
-      {
-        PCLPointCloud2::Ptr cloud_p(new PCLPointCloud2);
-        this->mCloudsGrid_p[col*this->mNbRows+row]= cloud_p;
-      }
+      PointCloudPtr cloud (new pcl::PointCloud<PointType>());
+      this->mCloudsGrid_p->at(i) = cloud;
     }
+    
   }
 
   ~CloudsGrid()
@@ -81,28 +81,31 @@ public:
     return this->mBBSizeY;
   }
 
-  size_t getNbCols(){
-    return this->mNbCols;
+  size_t getNbCellsX(){
+    return this->mNbCellsX;
   }
   
-  size_t getNbRows(){
-    return this->mNbRows;
+  size_t getNbCellsY(){
+    return this->mNbCellsY;
   }
 
   float getGridSize(){
     return this->mGridSize;
   }
-  PCLPointCloud2::Ptr* getCloudsGrid() {
+  std::vector<PointCloudPtr>* getCloudsGrid() {
   	return this->mCloudsGrid_p;
   }
 
-  PCLPointCloud2::Ptr getCloud(size_t i_col, size_t i_row) {
-  	return this->mCloudsGrid_p[i_col*this->mNbRows+i_row];
+  PointCloudPtr getCloud(size_t i_cellX, size_t i_cellY) {
+  	return this->mCloudsGrid_p->at(i_cellX*this->mNbCellsY+i_cellY);
   }
   
   uint8_t addPoint(liblas::Point const& i_p) {
     std::cout << i_p.GetX() << ", " << i_p.GetY() << ", " << i_p.GetZ() << "\n";
-      this->getCloud(floor(i_p.GetX()-this->getBBMin().x)/this->getBBSizeX(),floor(i_p.GetY()-this->getBBMin().y)/this->getBBSizeY()).;
+    PointType  pt(i_p.GetX(),i_p.GetY(),i_p.GetZ());
+    size_t cellX = floor(i_p.GetX()-this->getBBMin().x)/this->getGridSize();
+    size_t cellY = floor(i_p.GetY()-this->getBBMin().y)/this->getGridSize();
+    this->getCloud(cellX,cellY)->points.push_back(pt);
   	return 0;
   }
 };
@@ -113,13 +116,13 @@ using octree_disk = OutofcoreOctreeBase<>;
 const int OCTREE_DEPTH (0);
 const int OCTREE_RESOLUTION (1);
 
-PCLPointCloud2::Ptr
+PointCloudPtr
 getCloudFromFile (boost::filesystem::path las_path)
 {
   print_info ("Reading: %s ", las_path.c_str ());
 
   // Read las file
-  PCLPointCloud2::Ptr cloud(new PCLPointCloud2);
+  PointCloudPtr cloud(new pcl::PointCloud<PointType>);
 
   if (io::loadPCDFile (las_path.string (), *cloud) == -1)
   {
@@ -137,19 +140,6 @@ getCloudsGridFromFile (boost::filesystem::path las_path, float grid_size)
 {
   print_info ("Reading: %s ", las_path.c_str ());
 
-  //TODO: Split and generate OOCOctrees
-  // // Read las file
-  // PCLPointCloud2::Ptr cloud(new PCLPointCloud2);
-
-  // if (io::loadPCDFile (pcd_path.string (), *cloud) == -1)
-  // {
-  //   PCL_ERROR ("Couldn't read file\n");
-  //   exit (-1);
-  // }
-
-  // print_info ("(%d)\n", (cloud->width * cloud->height));
-
-  // return cloud;
   std::ifstream ifs;
   ifs.open(las_path.c_str(), std::ios::in | std::ios::binary);
   liblas::ReaderFactory f;
@@ -164,9 +154,9 @@ getCloudsGridFromFile (boost::filesystem::path las_path, float grid_size)
   std::cout << "Points count: " << header.GetPointRecordsCount() << '\n';
   while (reader.ReadNextPoint())
   {
-      outGrid->addPoint(reader.GetPoint())
+      outGrid->addPoint(reader.GetPoint());
   }
-
+  return outGrid;
 }
 
 int
@@ -174,21 +164,21 @@ outofcoreProcess (std::vector<boost::filesystem::path> las_paths, boost::filesys
                   int depth, double resolution, int build_octree_with, bool gen_lod, bool overwrite, bool multiresolution, float grid_size)
 {
   // Bounding box min/max pts
-  PointT min_pt, max_pt;
+  pcl::PointXYZ min_pt, max_pt;
 
   // Iterate over all las files resizing min/max
   for (std::size_t i = 0; i < las_paths.size (); i++)
   {
 
     CloudsGrid* cloudsGrid_p = getCloudsGridFromFile (las_paths[i], grid_size);
-
+    
     // // Get cloud
-    // PCLPointCloud2::Ptr cloud = getCloudFromFile (las_paths[i]);
+    // PointCloudPtr cloud = getCloudFromFile (las_paths[i]);
     // PointCloud<PointXYZ>::Ptr cloudXYZ (new PointCloud<PointXYZ>);
 
-    // fromPCLPointCloud2 (*cloud, *cloudXYZ);
+    // frompcl::PointCloud<PointType> (*cloud, *cloudXYZ);
 
-    // PointT tmp_min_pt, tmp_max_pt;
+    // pcl::PointXYZ tmp_min_pt, tmp_max_pt;
 
     // if (i == 0)
     // {
@@ -260,7 +250,7 @@ outofcoreProcess (std::vector<boost::filesystem::path> las_paths, boost::filesys
 //   for (const auto &las_path : las_paths)
 //   {
 
-//     PCLPointCloud2::Ptr cloud = getCloudFromFile (las_path);
+//     PointCloudPtr cloud = getCloudFromFile (las_path);
 
 //     std::uint64_t pts = 0;
     
@@ -353,7 +343,7 @@ main (int argc, char* argv[])
   bool multiresolution = false;
   bool overwrite = false;
   int build_octree_with = OCTREE_DEPTH;
-  float grid_size = 100.0F;
+  float grid_size = 10.0F;
 
   // If both depth and resolution specified
   if (find_switch (argc, argv, "-depth") && find_switch (argc, argv, "-resolution"))
