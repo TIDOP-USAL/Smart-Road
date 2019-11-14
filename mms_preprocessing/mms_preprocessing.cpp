@@ -1,6 +1,7 @@
 #include <pcl/common/time.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <pcl/conversions.h>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl/pcl_macros.h>
@@ -31,27 +32,28 @@ using pcl::console::print_error;
 using pcl::console::print_warn;
 using pcl::console::print_info;
 
+#define NBPTS_MIN 10U
 class CloudsGrid
 {
 private:
-  pcl::PointXYZ mBBMin;
-  pcl::PointXYZ mBBMax;
+  pcl::PointXYZ mGridMin;
+  pcl::PointXYZ mGridMax;
   size_t mNbCellsX, mNbCellsY;
-  float mGridSize, mBBSizeX, mBBSizeY;
+  float mGridSize, mGridSizeX, mGridSizeY;
   std::vector<PointCloudPtr>* mCloudsGrid_p;
 
 public:
 
-  CloudsGrid(pcl::PointXYZ i_BBMin, pcl::PointXYZ i_BBMax, float i_gridSize)
+  CloudsGrid(pcl::PointXYZ i_GridMin, pcl::PointXYZ i_GridMax, float i_gridSize)
   {
-    this->mBBMin = i_BBMin;
-  	this->mBBMax = i_BBMax;
+    this->mGridMin = i_GridMin;
+  	this->mGridMax = i_GridMax;
     this->mGridSize = i_gridSize;
 
-    this->mBBSizeX = this->mBBMax.x - this->mBBMin.x;
-    this->mBBSizeY = this->mBBMax.y - this->mBBMin.y;
-    this->mNbCellsX = ceil((this->mBBSizeX)/i_gridSize);
-    this->mNbCellsY = ceil((this->mBBSizeY)/i_gridSize);
+    this->mGridSizeX = this->mGridMax.x - this->mGridMin.x;
+    this->mGridSizeY = this->mGridMax.y - this->mGridMin.y;
+    this->mNbCellsX = ceil((this->mGridSizeX)/i_gridSize);
+    this->mNbCellsY = ceil((this->mGridSizeY)/i_gridSize);
     this->mCloudsGrid_p = new std::vector<PointCloudPtr>(this->mNbCellsX*this->mNbCellsY);
     for (size_t i = 0; i < this->mCloudsGrid_p->size(); i++)
     {
@@ -65,20 +67,20 @@ public:
   {
   }
 
-  pcl::PointXYZ getBBMin() {
-  	return this->mBBMin;
+  pcl::PointXYZ getGridMin() {
+  	return this->mGridMin;
   }
   
-  pcl::PointXYZ getBBMax() {
-  	return this->mBBMax;
+  pcl::PointXYZ getGridMax() {
+  	return this->mGridMax;
   }
 
-  float getBBSizeX(){
-    return this->mBBSizeX;
+  float getGridSizeX(){
+    return this->mGridSizeX;
   }
 
-  float getBBSizeY(){
-    return this->mBBSizeY;
+  float getGridSizeY(){
+    return this->mGridSizeY;
   }
 
   size_t getNbCellsX(){
@@ -101,10 +103,9 @@ public:
   }
   
   uint8_t addPoint(liblas::Point const& i_p) {
-    std::cout << i_p.GetX() << ", " << i_p.GetY() << ", " << i_p.GetZ() << "\n";
-    PointType  pt(i_p.GetX(),i_p.GetY(),i_p.GetZ());
-    size_t cellX = floor(i_p.GetX()-this->getBBMin().x)/this->getGridSize();
-    size_t cellY = floor(i_p.GetY()-this->getBBMin().y)/this->getGridSize();
+    PointType  pt(i_p.GetX()-this->mGridMin.x,i_p.GetY()-this->mGridMin.y,i_p.GetZ()-this->mGridMin.z);
+    size_t cellX = floor(pt.x/this->mGridSize);
+    size_t cellY = floor(pt.y/this->mGridSize);
     this->getCloud(cellX,cellY)->points.push_back(pt);
   	return 0;
   }
@@ -115,25 +116,6 @@ using octree_disk = OutofcoreOctreeBase<>;
 
 const int OCTREE_DEPTH (0);
 const int OCTREE_RESOLUTION (1);
-
-PointCloudPtr
-getCloudFromFile (boost::filesystem::path las_path)
-{
-  print_info ("Reading: %s ", las_path.c_str ());
-
-  // Read las file
-  PointCloudPtr cloud(new pcl::PointCloud<PointType>);
-
-  if (io::loadPCDFile (las_path.string (), *cloud) == -1)
-  {
-    PCL_ERROR ("Couldn't read file\n");
-    exit (-1);
-  }
-
-  print_info ("(%d)\n", (cloud->width * cloud->height));
-
-  return cloud;
-}
 
 CloudsGrid*
 getCloudsGridFromFile (boost::filesystem::path las_path, float grid_size)
@@ -146,8 +128,8 @@ getCloudsGridFromFile (boost::filesystem::path las_path, float grid_size)
   liblas::Reader reader = f.CreateWithStream(ifs);
   liblas::Header const& header = reader.GetHeader();
 
-  CloudsGrid* outGrid = new CloudsGrid(pcl::PointXYZ(header.GetMinX(),header.GetMinY(),header.GetMinZ()),
-                                       pcl::PointXYZ(header.GetMaxX(),header.GetMaxY(),header.GetMaxZ()), grid_size);
+  CloudsGrid* outGrid = new CloudsGrid(pcl::PointXYZ(floor(header.GetMinX()),floor(header.GetMinY()),floor(header.GetMinZ())),
+                                       pcl::PointXYZ(ceil(header.GetMaxX()),ceil(header.GetMaxY()),ceil(header.GetMaxZ())), grid_size);
 
   std::cout << "Compressed: " << (header.Compressed() == true) ? "true":"false";
   std::cout << "Signature: " << header.GetFileSignature() << '\n';
@@ -166,130 +148,109 @@ outofcoreProcess (std::vector<boost::filesystem::path> las_paths, boost::filesys
   // Bounding box min/max pts
   pcl::PointXYZ min_pt, max_pt;
 
+  CloudsGrid* cloudsGrid_p;
+
   // Iterate over all las files resizing min/max
   for (std::size_t i = 0; i < las_paths.size (); i++)
   {
 
-    CloudsGrid* cloudsGrid_p = getCloudsGridFromFile (las_paths[i], grid_size);
+    cloudsGrid_p = getCloudsGridFromFile (las_paths[i], grid_size);
     
-    // // Get cloud
-    // PointCloudPtr cloud = getCloudFromFile (las_paths[i]);
-    // PointCloud<PointXYZ>::Ptr cloudXYZ (new PointCloud<PointXYZ>);
+    std::uint64_t total_pts = 0;
 
-    // frompcl::PointCloud<PointType> (*cloud, *cloudXYZ);
+    for (size_t cloudID = 0; cloudID < cloudsGrid_p->getCloudsGrid()->size(); cloudID++)
+    {
+      if(cloudsGrid_p->getCloudsGrid()->at(cloudID)->points.size() <= NBPTS_MIN){
+        std::cout << "WARNING: Grid: " << cloudID << " NbPoints " << cloudsGrid_p->getCloudsGrid()->at(cloudID)->points.size() << std::endl;
+        continue;
+      }
+      pcl::PointXYZ tmp_min_pt, tmp_max_pt;
 
-    // pcl::PointXYZ tmp_min_pt, tmp_max_pt;
+      // Get min/max
+      getMinMax3D (*cloudsGrid_p->getCloudsGrid()->at(cloudID), min_pt, max_pt);
+      std::cout << "Bounds: " << min_pt << " - " << max_pt << std::endl;
 
-    // if (i == 0)
-    // {
-    //   // Get initial min/max
-    //   getMinMax3D (*cloudXYZ, min_pt, max_pt);
-    // }
-    // else
-    // {
-    //   getMinMax3D (*cloudXYZ, tmp_min_pt, tmp_max_pt);
+      // The bounding box of the root node of the out-of-core octree must be specified
+      const Eigen::Vector3d bounding_box_min (min_pt.x, min_pt.y, min_pt.z);
+      const Eigen::Vector3d bounding_box_max (max_pt.x, max_pt.y, max_pt.z);
 
-    //   // Resize new min
-    //   if (tmp_min_pt.x < min_pt.x)
-    //     min_pt.x = tmp_min_pt.x;
-    //   if (tmp_min_pt.y < min_pt.y)
-    //     min_pt.y = tmp_min_pt.y;
-    //   if (tmp_min_pt.z < min_pt.z)
-    //     min_pt.z = tmp_min_pt.z;
+      //specify the directory and the root node's meta data file with a
+      //".oct_idx" extension (currently it must be this extension)
+      std::string cellFolderName(las_paths[i].stem().c_str());
+      cellFolderName.append("_").append(std::to_string(cloudID));
+      boost::filesystem::path cell_path_on_disk (root_dir / cellFolderName);
+      
+      boost::filesystem::path octree_path_on_disk (cell_path_on_disk / "tree.oct_idx");
 
-    //   // Resize new max
-    //   if (tmp_max_pt.x > max_pt.x)
-    //     max_pt.x = tmp_max_pt.x;
-    //   if (tmp_max_pt.y > max_pt.y)
-    //     max_pt.y = tmp_max_pt.y;
-    //   if (tmp_max_pt.z > max_pt.z)
-    //     max_pt.z = tmp_max_pt.z;
-    // }
+      print_info ("Writing: %s\n", octree_path_on_disk.c_str ());
+      //make sure there isn't an octree there already
+      if (boost::filesystem::exists (octree_path_on_disk))
+      {
+        if (overwrite)
+        {
+          boost::filesystem::remove_all (root_dir);
+        }
+        else
+        {
+          PCL_ERROR ("There's already an octree in the default location. Check the tree directory\n");
+          return (-1);
+        }
+      }
+
+      octree_disk *outofcore_octree;
+
+      //create the out-of-core data structure (typedef'd above)
+      if (build_octree_with == OCTREE_DEPTH)
+      {
+        outofcore_octree = new octree_disk (depth, bounding_box_min, bounding_box_max, octree_path_on_disk, "ECEF");
+      }
+      else
+      {
+        outofcore_octree = new octree_disk (bounding_box_min, bounding_box_max, resolution, octree_path_on_disk, "ECEF");
+      }
+
+
+      PCLPointCloud2::Ptr cloud(new pcl::PCLPointCloud2);
+
+      pcl::toPCLPointCloud2(*cloudsGrid_p->getCloudsGrid()->at(cloudID),*cloud);
+
+      std::uint64_t pts = 0;
+      
+      if (gen_lod && !multiresolution)
+      {
+        print_info ("  Generating LODs\n");
+        pts = outofcore_octree->addPointCloud_and_genLOD (cloud);
+      }
+      else
+      {
+        pts = outofcore_octree->addPointCloud (cloud, false);
+      }
+      
+      print_info ("Successfully added %lu points\n", pts);
+      print_info ("%lu Points were dropped (probably NaN)\n", cloud->width*cloud->height - pts);
+      
+      
+      total_pts += pts;
+
+      double x, y;
+      outofcore_octree->getBinDimension (x, y);
+
+      print_info ("  Depth: %i\n", outofcore_octree->getDepth ());
+      print_info ("  Resolution: [%f, %f]\n", x, y);
+
+      if(multiresolution)
+      {
+        print_info ("Generating LOD...\n");
+        outofcore_octree->setSamplePercent (0.25);
+        outofcore_octree->buildLOD ();
+      }
+
+      //free outofcore data structure; the destructor forces buffer flush to disk
+      delete outofcore_octree;
+    }
+   print_info ("Added a total of %lu from %d clouds\n",total_pts, las_paths.size ());
+
   }
-
-//   std::cout << "Bounds: " << min_pt << " - " << max_pt << std::endl;
-
-//   // The bounding box of the root node of the out-of-core octree must be specified
-//   const Eigen::Vector3d bounding_box_min (min_pt.x, min_pt.y, min_pt.z);
-//   const Eigen::Vector3d bounding_box_max (max_pt.x, max_pt.y, max_pt.z);
-
-//   //specify the directory and the root node's meta data file with a
-//   //".oct_idx" extension (currently it must be this extension)
-//   boost::filesystem::path octree_path_on_disk (root_dir / "tree.oct_idx");
-
-//   print_info ("Writing: %s\n", octree_path_on_disk.c_str ());
-//   //make sure there isn't an octree there already
-//   if (boost::filesystem::exists (octree_path_on_disk))
-//   {
-//     if (overwrite)
-//     {
-//       boost::filesystem::remove_all (root_dir);
-//     }
-//     else
-//     {
-//       PCL_ERROR ("There's already an octree in the default location. Check the tree directory\n");
-//       return (-1);
-//     }
-//   }
-
-//   octree_disk *outofcore_octree;
-
-//   //create the out-of-core data structure (typedef'd above)
-//   if (build_octree_with == OCTREE_DEPTH)
-//   {
-//     outofcore_octree = new octree_disk (depth, bounding_box_min, bounding_box_max, octree_path_on_disk, "ECEF");
-//   }
-//   else
-//   {
-//     outofcore_octree = new octree_disk (bounding_box_min, bounding_box_max, resolution, octree_path_on_disk, "ECEF");
-//   }
-
-//   std::uint64_t total_pts = 0;
-
-//   // Iterate over all las files adding points to the octree
-//   for (const auto &las_path : las_paths)
-//   {
-
-//     PointCloudPtr cloud = getCloudFromFile (las_path);
-
-//     std::uint64_t pts = 0;
-    
-//     if (gen_lod && !multiresolution)
-//     {
-//       print_info ("  Generating LODs\n");
-//       pts = outofcore_octree->addPointCloud_and_genLOD (cloud);
-//     }
-//     else
-//     {
-//       pts = outofcore_octree->addPointCloud (cloud, false);
-//     }
-    
-//     print_info ("Successfully added %lu points\n", pts);
-//     print_info ("%lu Points were dropped (probably NaN)\n", cloud->width*cloud->height - pts);
-    
-// //    assert ( pts == cloud->width * cloud->height );
-    
-//     total_pts += pts;
-//   }
-
-//   print_info ("Added a total of %lu from %d clouds\n",total_pts, las_paths.size ());
-  
-
-//   double x, y;
-//   outofcore_octree->getBinDimension (x, y);
-
-//   print_info ("  Depth: %i\n", outofcore_octree->getDepth ());
-//   print_info ("  Resolution: [%f, %f]\n", x, y);
-
-//   if(multiresolution)
-//   {
-//     print_info ("Generating LOD...\n");
-//     outofcore_octree->setSamplePercent (0.25);
-//     outofcore_octree->buildLOD ();
-//   }
-
-//   //free outofcore data structure; the destructor forces buffer flush to disk
-//   delete outofcore_octree;
 
   return 0;
 }
@@ -399,5 +360,6 @@ main (int argc, char* argv[])
   if (root_dir.extension () == ".las")
     root_dir = root_dir.parent_path () / (root_dir.stem().string() + "_tree").c_str();
 
+  boost::filesystem::create_directory(root_dir);
   return outofcoreProcess (las_paths, root_dir, depth, resolution, build_octree_with, gen_lod, overwrite, multiresolution, grid_size);
 }
