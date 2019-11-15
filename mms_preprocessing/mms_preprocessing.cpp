@@ -12,6 +12,11 @@
 #include <pcl/outofcore/outofcore.h>
 #include <pcl/outofcore/outofcore_impl.h>
 
+#include <QFile>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonDocument>
+
 #include <liblas/liblas.hpp>
 #include <fstream>  // std::ifstream
 #include <iostream> // std::cout
@@ -108,6 +113,8 @@ public:
     size_t cellY = floor(pt.y/this->mGridSize);
     this->getCloud(cellX,cellY)->points.push_back(pt);
   	return 0;
+  }
+  uint8_t saveJSON(std::string o_jsonPath){
   }
 };
 
