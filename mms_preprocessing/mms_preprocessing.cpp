@@ -12,6 +12,7 @@
 #include <pcl/outofcore/outofcore.h>
 #include <pcl/outofcore/outofcore_impl.h>
 
+#include <QFileInfo>
 #include <QFile>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -43,29 +44,28 @@ class CloudsGrid
 private:
   pcl::PointXYZ mGridMin;
   pcl::PointXYZ mGridMax;
-  size_t mNbCellsX, mNbCellsY;
-  float mGridSize, mGridSizeX, mGridSizeY;
+  int mNbCellsX, mNbCellsY;
+  float mCellSize, mGridSizeX, mGridSizeY;
   std::vector<PointCloudPtr>* mCloudsGrid_p;
 
 public:
 
-  CloudsGrid(pcl::PointXYZ i_GridMin, pcl::PointXYZ i_GridMax, float i_gridSize)
+  CloudsGrid(pcl::PointXYZ i_GridMin, pcl::PointXYZ i_GridMax, float i_cellSize)
   {
     this->mGridMin = i_GridMin;
   	this->mGridMax = i_GridMax;
-    this->mGridSize = i_gridSize;
+    this->mCellSize = i_cellSize;
 
     this->mGridSizeX = this->mGridMax.x - this->mGridMin.x;
     this->mGridSizeY = this->mGridMax.y - this->mGridMin.y;
-    this->mNbCellsX = ceil((this->mGridSizeX)/i_gridSize);
-    this->mNbCellsY = ceil((this->mGridSizeY)/i_gridSize);
+    this->mNbCellsX = ceil(this->mGridSizeX/this->mCellSize);
+    this->mNbCellsY = ceil(this->mGridSizeY/this->mCellSize);
     this->mCloudsGrid_p = new std::vector<PointCloudPtr>(this->mNbCellsX*this->mNbCellsY);
-    for (size_t i = 0; i < this->mCloudsGrid_p->size(); i++)
+    for (int i = 0; i < this->mCloudsGrid_p->size(); i++)
     {
       PointCloudPtr cloud (new pcl::PointCloud<PointType>());
       this->mCloudsGrid_p->at(i) = cloud;
     }
-    
   }
 
   ~CloudsGrid()
@@ -88,36 +88,81 @@ public:
     return this->mGridSizeY;
   }
 
-  size_t getNbCellsX(){
+  int getNbCellsX(){
     return this->mNbCellsX;
   }
   
-  size_t getNbCellsY(){
+  int getNbCellsY(){
     return this->mNbCellsY;
   }
 
   float getGridSize(){
-    return this->mGridSize;
+    return this->mCellSize;
   }
   std::vector<PointCloudPtr>* getCloudsGrid() {
   	return this->mCloudsGrid_p;
   }
 
-  PointCloudPtr getCloud(size_t i_cellX, size_t i_cellY) {
+  PointCloudPtr getCloud(int i_cellX, int i_cellY) {
   	return this->mCloudsGrid_p->at(i_cellX*this->mNbCellsY+i_cellY);
   }
   
-  uint8_t addPoint(liblas::Point const& i_p) {
+  int addPoint(liblas::Point const& i_p) {
     PointType  pt(i_p.GetX()-this->mGridMin.x,i_p.GetY()-this->mGridMin.y,i_p.GetZ()-this->mGridMin.z);
-    size_t cellX = floor(pt.x/this->mGridSize);
-    size_t cellY = floor(pt.y/this->mGridSize);
+    int cellX = floor(pt.x/this->mCellSize);
+    int cellY = floor(pt.y/this->mCellSize);
     this->getCloud(cellX,cellY)->points.push_back(pt);
   	return 0;
   }
-  uint8_t saveJSON(std::string o_jsonPath){
+  int saveJSON(QString i_rootName, QString o_jsonPath){
+    QFile file(o_jsonPath);
+    if(QFileInfo::exists(o_jsonPath))
+      file.remove();
+
+    QJsonObject rootObject;
+    rootObject.insert("RootName", i_rootName);
+
+    QJsonObject gridObject;
+    QJsonObject gridObjectMin;
+    gridObjectMin.insert("X", QJsonValue(this->mGridMin.x));
+    gridObjectMin.insert("Y", QJsonValue(this->mGridMin.y));
+    gridObjectMin.insert("Z", QJsonValue(this->mGridMin.z));
+    gridObject.insert("Min", gridObjectMin);
+    QJsonObject gridObjectMax;
+    gridObjectMax.insert("X", QJsonValue(this->mGridMax.x));
+    gridObjectMax.insert("Y", QJsonValue(this->mGridMax.y));
+    gridObjectMax.insert("Z", QJsonValue(this->mGridMax.z));
+    gridObject.insert("CellSize", this->mCellSize);
+    QJsonObject gridCells;
+    gridCells.insert("X", QJsonValue(this->mNbCellsX));
+    gridCells.insert("Y", QJsonValue(this->mNbCellsY));
+
+    QJsonArray cellsArray;
+    for (int cellID = 0; cellID < mCloudsGrid_p->size(); cellID++)
+    {
+      int nbPts = mCloudsGrid_p->at(cellID)->points.size();
+      if(nbPts < NBPTS_MIN)continue;
+      QJsonObject cell;
+      cell.insert("CellID", QJsonValue(cellID));
+      cell.insert("IndexX", QJsonValue(cellID/this->mNbCellsY));
+      cell.insert("IndexY", QJsonValue(cellID%this->mNbCellsY));
+      cell.insert("Name", QJsonValue(cellID));
+      cell.insert("NBPoints", QJsonValue(nbPts));
+      cellsArray.push_back(cell);
+    }
+    gridCells.insert("CellsArray", cellsArray);
+
+    gridObject.insert("Cells", gridCells);
+
+    rootObject.insert("OctreeGrid", gridObject);
+
+    QJsonDocument doc(rootObject);
+
+    file.open(QFile::WriteOnly | QFile::Text | QFile::Truncate);
+    file.write(doc.toJson());
+    file.close();
   }
 };
-
 
 using octree_disk = OutofcoreOctreeBase<>;
 
@@ -158,16 +203,18 @@ outofcoreProcess (std::vector<boost::filesystem::path> las_paths, boost::filesys
   CloudsGrid* cloudsGrid_p;
 
   // Iterate over all las files resizing min/max
-  for (std::size_t i = 0; i < las_paths.size (); i++)
+  for (int i = 0; i < las_paths.size (); i++)
   {
 
     cloudsGrid_p = getCloudsGridFromFile (las_paths[i], grid_size);
     
+    cloudsGrid_p->saveJSON(QString(las_paths[i].stem().c_str()),  QString(boost::filesystem::path(root_dir / "oct_meta.json").string().c_str()));
+    
     std::uint64_t total_pts = 0;
 
-    for (size_t cloudID = 0; cloudID < cloudsGrid_p->getCloudsGrid()->size(); cloudID++)
+    for (int cloudID = 0; cloudID < cloudsGrid_p->getCloudsGrid()->size(); cloudID++)
     {
-      if(cloudsGrid_p->getCloudsGrid()->at(cloudID)->points.size() <= NBPTS_MIN){
+      if(cloudsGrid_p->getCloudsGrid()->at(cloudID)->points.size() < NBPTS_MIN){
         std::cout << "WARNING: Grid: " << cloudID << " NbPoints " << cloudsGrid_p->getCloudsGrid()->at(cloudID)->points.size() << std::endl;
         continue;
       }
