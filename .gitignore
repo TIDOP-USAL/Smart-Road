@@ -1,2 +1,2 @@
-mms_viewer/build/*
-mms_viewer/.vscode/*
+build/*
+.vscode/*
